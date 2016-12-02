@@ -21,6 +21,8 @@
 
 #include <signal.h>
 
+#include <mpi.h>
+
 using namespace std;
 
 void beepOff(int)
@@ -52,8 +54,16 @@ void beep(int fre, int usDuration)
 
 int main(int argc, char** argv)
 {
+    MPI::Init(argc, argv);
+    
     signal(SIGINT, beepOff);
 
+    // determine the size of the world
+    int totalProcesses=MPI::COMM_WORLD.Get_size();
+
+    // determine which process i am
+    int worldRank = MPI::COMM_WORLD.Get_rank();
+    
     Options options;
     options.process(argc, argv);
     MidiFile midifile;
@@ -66,52 +76,57 @@ int main(int argc, char** argv)
         return -1;
     }
 
+    midifile.linkNotePairs();
+    midifile.joinTracks();
+    midifile.doTimeAnalysis();
+    midifile.absoluteTicks();
+
     int k= iopl(3);
 
     printf("\n Result iopl: %d \n", k);
     if (k<0)
     {
         cerr << " iopl() " << endl;
-        return k;
     }
+    else
+    {
+        double lastNoteFinished = 0.0;
+        
+        MPI::COMM_WORLD.Barrier()
+        
+        for (int track=0; track < midifile.getTrackCount(); track++) {
+            for (int i=0; i<midifile[track].size(); i++) {
+                MidiEvent* mev = &midifile[track][i];
+                if (!mev->isNoteOn() || mev->getLinkedEvent() == NULL) {
+                    continue;
+                }
 
-    midifile.linkNotePairs();
-    midifile.joinTracks();
-    midifile.doTimeAnalysis();
+                // pause, silence
+                int silence = static_cast<int>((midifile.getTimeInSeconds(mev->tick) - lastNoteFinished) * 1000 * 1000);
+                if(silence >0)
+                {
+                    usleep(silence);
+                }
 
-    midifile.absoluteTicks();
+                double duration = mev->getDurationInSeconds();
 
-    double lastNoteFinished = 0.0;
-    for (int track=0; track < midifile.getTrackCount(); track++) {
-        for (int i=0; i<midifile[track].size(); i++) {
-            MidiEvent* mev = &midifile[track][i];
-            if (!mev->isNoteOn() || mev->getLinkedEvent() == NULL) {
-                continue;
+                int halfTonesFromA4 = mev->getKeyNumber() - 69; // 69 == A4 == 440Hz
+                int frq = 440 * pow(2, halfTonesFromA4/12.0);
+
+                // play note
+                beep(frq, static_cast<int>(duration*1000*1000));
+
+                MidiEvent* off = mev->getLinkedEvent();
+                lastNoteFinished = midifile.getTimeInSeconds(off->tick);
+
             }
-
-            // pause, silence
-            int silence = static_cast<int>((midifile.getTimeInSeconds(mev->tick) - lastNoteFinished) * 1000 * 1000);
-            if(silence >0)
-            {
-                usleep(silence);
-            }
-
-            double duration = mev->getDurationInSeconds();
-
-            int halfTonesFromA4 = mev->getKeyNumber() - 69; // 69 == A4 == 440Hz
-            int frq = 440 * pow(2, halfTonesFromA4/12.0);
-
-            // play note
-            beep(frq, static_cast<int>(duration*1000*1000));
-
-            MidiEvent* off = mev->getLinkedEvent();
-            lastNoteFinished = midifile.getTimeInSeconds(off->tick);
-
         }
     }
 
 
-    return 0;
+  MPI_Finalize();
+    
+    return k;
 }
 
 
