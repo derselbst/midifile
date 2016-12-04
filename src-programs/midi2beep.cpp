@@ -77,7 +77,6 @@ int main(int argc, char** argv)
     }
 
     midifile.linkNotePairs();
-    midifile.joinTracks();
     midifile.doTimeAnalysis();
     midifile.absoluteTicks();
 
@@ -92,9 +91,9 @@ int main(int argc, char** argv)
     {
         double lastNoteFinished = 0.0;
         
-        MPI::COMM_WORLD.Barrier()
+        MPI::COMM_WORLD.Barrier();
         
-        for (int track=0; track < midifile.getTrackCount(); track++) {
+        for (int track=worldRank%midifile.getTrackCount(); track < midifile.getTrackCount(); track+=totalProcesses) {
             for (int i=0; i<midifile[track].size(); i++) {
                 MidiEvent* mev = &midifile[track][i];
                 if (!mev->isNoteOn() || mev->getLinkedEvent() == NULL) {
